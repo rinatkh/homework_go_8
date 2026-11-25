@@ -1,0 +1,70 @@
+name: Homework 8 CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '1'
+
+jobs:
+  starter:
+    name: Starter validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Версия Go
+        run: go version
+      - name: Компиляция, gofmt, vet, восемь cmd и сборка
+        run: make starter-check
+      - name: Race проверок запуска
+        run: go test -race ./internal/demo ./test/integration/...
+
+  functional:
+    name: Functional tests (${{ matrix.section }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        section: [linkedlist, stack, queue, buffer, ringbuffer, hashtable, analysis, benchmark]
+    env:
+      SECTION: ${{ matrix.section }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Проверить контракты раздела; TODO приводят к ошибке
+        run: make "test-$SECTION"
+      # Восьмая группа реально вызывает BenchmarkStructures через test-benchmark
+      # с benchtime=1x: обычный go test не выполняет benchmark-функции.
+      - name: Race и coverage готового раздела
+        run: go test -race -coverprofile="coverage-$SECTION.out" "./internal/$SECTION"
+      - name: Сохранить доступное покрытие
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: homework8-${{ matrix.section }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-${{ matrix.section }}.out
+          retention-days: 7
+          if-no-files-found: warn
